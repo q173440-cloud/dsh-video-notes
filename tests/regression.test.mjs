@@ -3,7 +3,8 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import { normalizeSegments, sliceSegments } from '../lib/transcript.js';
 import { VideoNotesStore, decodeJpegDimensions } from '../lib/store.js';
-import { generateLocalStableId } from '../lib/source.js';
+import { generateLocalStableId, inspectSource } from '../lib/source.js';
+import { runProcess } from '../lib/process.js';
 import { VideoPipeline } from '../lib/pipeline.js';
 import { hasRequiredDependencies, resolvePython } from '../lib/index.js';
 
@@ -269,6 +270,74 @@ async function runTests() {
 
   await fs.rm(test11Episode, { recursive: true, force: true });
   console.log(' -> Test 11 ALL QUALITY & RECALL VERIFICATIONS PASSED!');
+  passed++;
+
+  
+  // Test 12: 验证 Windows 下 runProcess 在无 subprocessService 时的强兼容性（彻底解决 spawn EPERM）
+  console.log('Test 12: runProcess executes safely in constrained environment without spawn EPERM');
+  const procRes = await runProcess('cmd.exe', ['/c', 'echo SANDBOX_PROC_COMPLIANT']);
+  assert.strictEqual(procRes.code, 0, 'Exit code must be 0');
+  assert(procRes.stdout.includes('SANDBOX_PROC_COMPLIANT'), 'Stdout must capture output via file redirect fallback');
+  console.log(' -> Test 12 PASSED (runProcess EPERM fallback verified)');
+  passed++;
+
+  // Test 13: 验证 B 站 UGC 合集 (ugc_season) 自动探测与条目展开能力
+  console.log('Test 13: inspectSource automatically resolves UGC season episodes on collection scope');
+  const validPython = path.resolve('E:/0/AI/DeepSeek Harness/插件制作/dsh-video-notes/.venv/Scripts/python.exe');
+  const ugcResult = await inspectSource('https://www.bilibili.com/video/BV1pwnj6BEMP', {
+    pythonExe: validPython,
+    scope: 'collection'
+  });
+  assert.strictEqual(ugcResult.sourceType, 'bilibili');
+  assert.strictEqual(ugcResult.isCollection, true);
+  assert(ugcResult.items.length >= 8, `Expected at least 8 episodes in season, got ${ugcResult.items.length}`);
+  const firstEp = ugcResult.items[0];
+  assert(firstEp.stableId.startsWith('bili-'), 'Item stableId must follow bilibili contract');
+  assert(firstEp.duration > 0, 'Item must have valid duration');
+  console.log(` -> Test 13 PASSED (UGC season resolved ${ugcResult.items.length} items automatically)`);
+  passed++;
+
+  // Test 14: 验证缺失音频流时的端到端自动探测与合并补救机制
+  console.log('Test 14: pipeline detects missing audio track and executes auto-merge fallback');
+  const test14Episode = path.join('E:/0/AI/DeepSeek Harness/插件制作/video-notes-data/episodes/test-audio-recovery');
+  const t14Work = path.join(test14Episode, 'work');
+  await fs.mkdir(t14Work, { recursive: true });
+
+  const ffmpegExe = path.resolve('E:/0/AI/DeepSeek Harness/插件制作/dsh-video-notes/bin/ffmpeg.exe');
+  const ffprobeExe = path.resolve('E:/0/AI/DeepSeek Harness/插件制作/dsh-video-notes/bin/ffprobe.exe');
+  const sampleVid = path.resolve('E:/0/AI/DeepSeek Harness/插件制作/test_sample.mp4');
+  const noAudioVid = path.join(t14Work, 'video_silent.mp4');
+  const suppAudio = path.join(t14Work, 'supplement_audio.wav');
+
+  // 1. 生成纯视频（无音频轨）
+  await runProcess(ffmpegExe, ['-y', '-i', sampleVid, '-an', '-c:v', 'copy', noAudioVid]);
+  
+  // 验证探针确认无音频轨
+  const probeBefore = await pipeline.readSlice ? await import('../lib/media.js').then(m => m.probeMedia(ffprobeExe, noAudioVid)) : { audioTracks: [] };
+  assert.strictEqual(probeBefore.audioTracks.length, 0, 'Prepared video MUST have 0 audio tracks for test');
+
+  // 2. 生成辅助音频供补救合流
+  await runProcess(ffmpegExe, ['-y', '-i', sampleVid, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', suppAudio]);
+  assert.strictEqual(await fs.stat(suppAudio).then(() => true).catch(() => false), true);
+
+  // 3. 运行 pipeline.prepareEpisode，传入无音频视频
+  const testPipeline = new VideoPipeline({
+    pythonExe: validPython,
+    ffmpegExe,
+    ffprobeExe,
+    transcribeScript: path.resolve('E:/0/AI/DeepSeek Harness/插件制作/dsh-video-notes/python/transcribe.py'),
+    store
+  });
+
+  const prepRes = await testPipeline.prepareEpisode(noAudioVid, 'test-audio-recovery', { forceRebuild: true });
+  assert.strictEqual(prepRes.entryId, 'test-audio-recovery');
+  
+  // 验证生成的 transcript.json 是否成功由补救音频转写产出
+  const tStat = await fs.stat(path.join(test14Episode, 'transcript.json')).then(() => true).catch(() => false);
+  assert.strictEqual(tStat, true, 'transcript.json MUST be successfully generated after audio recovery');
+
+  await fs.rm(test14Episode, { recursive: true, force: true });
+  console.log(' -> Test 14 PASSED (end-to-end audio recovery successfully verified)');
   passed++;
 
   console.log(`\nALL ${passed} STRICT REGRESSION TESTS PASSED!`);

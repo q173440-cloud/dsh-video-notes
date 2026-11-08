@@ -96,6 +96,46 @@ export async function inspectSource(
   const lines = res.stdout.trim().split('\n').filter(l => l.trim().length > 0);
   const items: VideoItemSummary[] = [];
 
+  // ... 增强探测逻辑 ...
+
+
+  // 增强探测：对于 B 站链接，尝试获取 UGC season 完整合集信息
+  if (sourceType === 'bilibili' && scope === 'collection') {
+    const bvidMatch = input.match(/(BV[a-zA-Z0-9]+)/);
+    if (bvidMatch) {
+      const bvid = bvidMatch[1];
+      try {
+        const { stdout: apiOut } = await runProcess(options.pythonExe, [
+          '-c', `import urllib.request, json; 
+req = urllib.request.Request(\"https://api.bilibili.com/x/web-interface/view?bvid=${bvid}\", headers={"User-Agent": "Mozilla/5.0"});
+print(json.dumps(json.loads(urllib.request.urlopen(req).read().decode("utf-8")).get("data", {}).get("ugc_season", {}).get("sections", [])))`
+        ], { timeoutMs: 30000 });
+        
+        const sections = JSON.parse(apiOut);
+        if (sections && sections.length > 0) {
+          let count = 0;
+          for (const sec of sections) {
+            for (const ep of sec.episodes) {
+              items.push({
+                id: String(++count),
+                stableId: `bili-${ep.bvid}-p1`,
+                title: ep.title,
+                url: `https://www.bilibili.com/video/${ep.bvid}`,
+                duration: ep.arc.duration,
+                uploader: '',
+                pIndex: count,
+                status: 'queued'
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('UGC season API fetch failed, falling back to playlist:', e);
+      }
+    }
+  }
+
+  if (items.length === 0) {
   for (let i = 0; i < lines.length; i++) {
     try {
       const parsed = JSON.parse(lines[i]);
@@ -126,6 +166,7 @@ export async function inspectSource(
     } catch {
       // ignore
     }
+  }
   }
 
   if (items.length === 0) {
