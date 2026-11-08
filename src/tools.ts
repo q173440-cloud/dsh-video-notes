@@ -3,7 +3,8 @@ import { inspectSource } from './source.js';
 import { VideoNotesStore } from './store.js';
 import { SaveNoteInput, ScopeMode } from './types.js';
 
-export function createTools(pipeline: VideoPipeline, store: VideoNotesStore, pythonExe: string, subprocessService?: any) {
+export function createTools(pipeline: VideoPipeline, store: VideoNotesStore, pythonExe: string, ctx: any) {
+  const subprocessService = ctx.subprocess;
   // 1. video_inspect
   const videoInspect = {
     name: 'video_inspect',
@@ -162,31 +163,55 @@ export function createTools(pipeline: VideoPipeline, store: VideoNotesStore, pyt
         }
       },
       render(args: any, value: any) {
-        let text = `【时间切片: ${value.timeRange[0]}s -> ${value.timeRange[1]}s (总长 ${Math.round(value.totalDuration)}s)】\n`;
-        text += `\n--- 字幕片段 (${value.segments.length} 条) ---\n`;
+        const result: any[] = [{ type: 'text' as const, text: `【时间切片: ${value.timeRange[0]}s -> ${value.timeRange[1]}s (总长 ${Math.round(value.totalDuration)}s)】\n` }];
+        
+        result[0].text += `\n--- 字幕片段 (${value.segments.length} 条) ---\n`;
         for (const s of value.segments) {
           const rawInfo = (s.rawText && s.rawText !== s.text) ? ` [原听写: ${s.rawText}]` : '';
-          text += `[${s.start.toFixed(1)}s - ${s.end.toFixed(1)}s]: ${s.text}${rawInfo}\n`;
+          result[0].text += `[${s.start.toFixed(1)}s - ${s.end.toFixed(1)}s]: ${s.text}${rawInfo}\n`;
         }
-        text += `\n--- 关键帧证据 (${value.frames.length} 张) ---\n`;
+        
+        result[0].text += `\n--- 关键帧证据 (${value.frames.length} 张) ---\n`;
         for (const f of value.frames) {
-          text += `[时间点 ${f.relativeTime} (${f.timestamp}s)] 截图文件: ${f.path}\n`;
+          result[0].text += `[时间点 ${f.relativeTime} (${f.timestamp}s)] 截图文件: ${f.path}\n`;
+          if (f.attachment) {
+            result.push({ type: 'image' as const, attachment: f.attachment });
+          }
         }
+        
         if (value.hasMore && value.nextRange) {
-          text += `\n后续分段: [${value.nextRange[0]}s -> ${value.nextRange[1]}s]，可继续调用 video_read_slice 获取。\n`;
+          result[0].text += `\n后续分段: [${value.nextRange[0]}s -> ${value.nextRange[1]}s]，可继续调用 video_read_slice 获取。\n`;
         } else {
-          text += `\n已到达视频结尾。\n`;
+          result[0].text += `\n已到达视频结尾。\n`;
         }
-        return [{ type: 'text' as const, text }];
+        return result;
       }
     },
-    async execute(args: { entryId: string; startTimeSec?: number; durationSec?: number }) {
+    async execute(args: { entryId: string; startTimeSec?: number; durationSec?: number }, exec: any) {
       if (!args.entryId) {
         throw new Error('Missing entryId in video_read_slice');
       }
       const start = Number(args.startTimeSec || 0);
       const dur = Number(args.durationSec || 120);
-      return await pipeline.readSlice(args.entryId, start, dur);
+      const result = await pipeline.readSlice(args.entryId, start, dur);
+      
+      const attachments = ctx.get?.('attachments');
+      if (attachments && result.frames && result.frames.length > 0) {
+        try {
+          const fs = await import('node:fs/promises');
+          const batch = await Promise.all(result.frames.map(async (f) => {
+            const data = await fs.readFile(f.path);
+            return { data, mediaType: 'image/jpeg', name: f.id };
+          }));
+          const refs = await attachments.saveImages(batch);
+          for (let i = 0; i < result.frames.length; i++) {
+            result.frames[i].attachment = refs[i];
+          }
+        } catch (e) {
+          console.error('Failed to register image attachments:', e);
+        }
+      }
+      return result;
     }
   };
 

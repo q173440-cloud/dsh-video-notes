@@ -114,7 +114,7 @@ export async function apply(ctx: any, config: PluginConfig = {}) {
     sceneChangeThreshold: config.sceneChangeThreshold || 0.3
   });
 
-  const tools = createTools(pipeline, store, pythonExe, ctx.subprocess);
+  const tools = createTools(pipeline, store, pythonExe, ctx);
   const disposers: Array<() => void> = [];
 
   for (const t of tools) {

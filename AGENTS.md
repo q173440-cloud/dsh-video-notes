@@ -16,3 +16,9 @@
 | 已有条目产物完备时严禁重复下载网络媒体，必须就地复用 | `src/pipeline.ts` `hasPreparedArtifacts` + `pnpm test` (Test 10) |
 | completed 完整笔记严禁缺少精确时间戳回查、关键帧定位与主客观来源区分 | `src/store.ts` 事实回查与来源区隔核验 + `pnpm test` (Test 11 负例与正例) |
 | 交差前必须跑通测试套件，通过全部正负例回归测试 | `pnpm test` (全部测试通过) |
+
+## 本项目特有约束
+- 提交前必须执行 `node scripts/check-size.mjs`，确保源码文件 < 20KB。
+- 管道权限：Windows 环境若遇 EPERM，自动回退至临时文件通道 (src/process.ts)。
+- 媒体处理：缺失音频流时自动调用独立音频补救 (src/pipeline.ts)。
+- 探测合集：B 站链接必须区分单一视频与 UGC 合集 (scope: "collection")。
