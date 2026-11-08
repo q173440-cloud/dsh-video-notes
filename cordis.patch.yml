@@ -1,0 +1,9 @@
+- insert:
+    - id: video-notes
+      name: 'dsh-video-notes'
+      config:
+        dataDir: 'E:/0/AI/DeepSeek Harness/插件制作/video-notes-data'
+        whisperModel: 'small'
+        computeType: 'int8'
+        baselineIntervalSec: 10
+        sceneChangeThreshold: 0.3

@@ -1,0 +1,16 @@
+# 忽略本地开发环境与大型二进制依赖
+.venv/
+bin/
+node_modules/
+*.tgz
+*.log
+*.tmp
+*.py
+.DS_Store
+dist/
+# 测试数据与缓存
+video-notes-data/
+tests/data/
+# 临时脚本
+diagnose-dsh-run.py
+test-run-real-video.py
