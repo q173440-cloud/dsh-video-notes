@@ -8,13 +8,13 @@ export function createTools(pipeline: VideoPipeline, store: VideoNotesStore, pyt
   // 1. video_inspect
   const videoInspect = {
     name: 'video_inspect',
-    description: '探测视频链接（B站/YouTube/本地文件）的元信息、分P与合集目录。仅进行元信息探测，不下载视频亦不进行总结。',
+    description: '探测视频链接（B站/YouTube）或本地视频文件/目录的元信息、分P与合集目录。仅进行元信息探测，不下载视频亦不进行总结。',
     parameters: {
       type: 'object',
       properties: {
         url: {
           type: 'string',
-          description: '视频 URL（B站、YouTube等）或本地视频文件绝对路径'
+          description: '视频 URL（B站/YouTube链接或分享文案）或本地视频文件/目录绝对路径'
         },
         scope: {
           type: 'string',
@@ -67,6 +67,9 @@ export function createTools(pipeline: VideoPipeline, store: VideoNotesStore, pyt
       return await inspectSource(args.url, {
         pythonExe,
         scope: args.scope || 'single',
+        cookies: pipeline.options.cookies,
+        dataDir: store.baseDataDir,
+        ffprobeExe: pipeline.options.ffprobeExe,
         signal: exec.signal,
         subprocessService
       });

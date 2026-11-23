@@ -127,9 +127,12 @@ export interface SaveNoteResult {
 
 export interface PluginConfig {
   dataDir?: string;
+  modelDir?: string;
   pythonPath?: string;
   whisperModel?: string;
   computeType?: string;
+  language?: string;
+  cookies?: string;
   baselineIntervalSec?: number;
   sceneChangeThreshold?: number;
 }

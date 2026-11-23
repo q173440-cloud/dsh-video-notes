@@ -15,12 +15,14 @@ async function fileExists(p: string): Promise<boolean> {
 }
 
 export async function hasRequiredDependencies(pythonExe: string): Promise<boolean> {
-  if (!await fileExists(pythonExe)) return false;
+  const hasPathSep = pythonExe.includes('/') || pythonExe.includes('\\');
+  if (hasPathSep && !await fileExists(pythonExe)) return false;
 
   const baseDir = path.dirname(path.dirname(pythonExe));
   const candidateSitePackages = [
     path.join(baseDir, 'Lib', 'site-packages'),
     path.join(baseDir, 'lib', 'site-packages'),
+    path.join(baseDir, 'lib', 'python3.12', 'site-packages'),
     path.join(path.dirname(pythonExe), 'Lib', 'site-packages')
   ];
 
@@ -53,17 +55,20 @@ export async function resolvePython(configPath?: string, pkgRoot?: string): Prom
   }
 
   if (pkgRoot) {
-    candidates.push(path.join(pkgRoot, '.venv', 'Scripts', 'python.exe'));
     candidates.push(path.join(pkgRoot, '.venv', 'bin', 'python'));
+    candidates.push(path.join(pkgRoot, '.venv', 'bin', 'python3'));
+    candidates.push(path.join(pkgRoot, '.venv', 'Scripts', 'python.exe'));
   }
 
-  candidates.push(
-    path.join(process.env.USERPROFILE || 'C:\\Users\\wtqweeqopt', 'AppData', 'Roaming', 'uv', 'python', 'cpython-3.12-windows-x86_64-none', 'python.exe'),
-    path.join(process.env.USERPROFILE || 'C:\\Users\\wtqweeqopt', 'AppData', 'Roaming', 'uv', 'python', 'cpython-3.12.13-windows-x86_64-none', 'python.exe'),
-    path.join(process.env.DSH_HOME || 'C:\\Users\\wtqweeqopt\\.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'python', 'python.exe'),
-    'python.exe',
-    'python3'
-  );
+  if (process.platform === 'win32') {
+    candidates.push(
+      path.join(process.env.USERPROFILE || 'C:\\Users\\wtqweeqopt', 'AppData', 'Roaming', 'uv', 'python', 'cpython-3.12-windows-x86_64-none', 'python.exe'),
+      path.join(process.env.USERPROFILE || 'C:\\Users\\wtqweeqopt', 'AppData', 'Roaming', 'uv', 'python', 'cpython-3.12.13-windows-x86_64-none', 'python.exe'),
+      path.join(process.env.DSH_HOME || 'C:\\Users\\wtqweeqopt\\.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'python', 'python.exe'),
+      'python.exe'
+    );
+  }
+  candidates.push('python3', 'python');
 
   for (const c of candidates) {
     if (await hasRequiredDependencies(c)) {
@@ -92,6 +97,7 @@ export async function apply(ctx: any, config: PluginConfig = {}) {
 
   const defaultDataDir = path.resolve(pkgRoot, '..', 'video-notes-data');
   const dataDir = config.dataDir ? path.resolve(config.dataDir) : defaultDataDir;
+  const modelDir = config.modelDir ? path.resolve(config.modelDir) : path.join(dataDir, 'models');
 
   const pythonExe = await resolvePython(config.pythonPath, pkgRoot);
   const ffmpegExe = await resolveBinary('ffmpeg', pkgRoot);
@@ -108,8 +114,11 @@ export async function apply(ctx: any, config: PluginConfig = {}) {
     transcribeScript,
     store,
     subprocessService: ctx.subprocess,
+    modelDir,
     whisperModel: config.whisperModel || 'small',
     computeType: config.computeType || 'int8',
+    language: config.language || 'auto',
+    cookies: config.cookies,
     baselineIntervalSec: config.baselineIntervalSec || 10,
     sceneChangeThreshold: config.sceneChangeThreshold || 0.3
   });

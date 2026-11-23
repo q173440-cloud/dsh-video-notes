@@ -135,7 +135,7 @@ export async function extractKeyframes(
   const args = [
     '-y',
     '-i', videoPath,
-    '-vf', `select='${selectExpr}'`,
+    '-vf', `select='${selectExpr}',showinfo`,
     '-fps_mode', 'vfr',
     '-frame_pts', '1',
     '-q:v', '3',
@@ -156,6 +156,16 @@ export async function extractKeyframes(
   const files = await fs.readdir(outputDir);
   const jpgFiles = files.filter(f => f.startsWith('frame_pts_') && f.endsWith('.jpg')).sort();
 
+  const showinfoPtsTimes: number[] = [];
+  for (const line of res.stderr.split('\n')) {
+    if (!line.includes('Parsed_showinfo_')) continue;
+    const mTime = line.match(/pts_time:([0-9.]+)/);
+    if (mTime) {
+      showinfoPtsTimes.push(Number(mTime[1]));
+    }
+  }
+  const useExactPtsTime = showinfoPtsTimes.length === jpgFiles.length;
+
   const evidences: VideoFrameEvidence[] = [];
   for (let i = 0; i < jpgFiles.length; i++) {
     const fName = jpgFiles[i];
@@ -164,7 +174,8 @@ export async function extractKeyframes(
     const m = fName.match(/frame_pts_(\d+)\.jpg/);
     if (!m) continue;
     const pts = parseInt(m[1], 10);
-    const realSec = Math.round((pts / fps) * 10) / 10;
+    const rawSec = useExactPtsTime ? showinfoPtsTimes[i] : (pts / fps);
+    const realSec = Math.round(rawSec * 10) / 10;
 
     const min = Math.floor(realSec / 60);
     const sec = Math.floor(realSec % 60);

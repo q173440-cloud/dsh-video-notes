@@ -1,7 +1,7 @@
 import { VideoPipeline } from './pipeline.js';
 import { VideoNotesStore } from './store.js';
 import { SaveNoteInput, ScopeMode } from './types.js';
-export declare function createTools(pipeline: VideoPipeline, store: VideoNotesStore, pythonExe: string, subprocessService?: any): ({
+export declare function createTools(pipeline: VideoPipeline, store: VideoNotesStore, pythonExe: string, ctx: any): ({
     name: string;
     description: string;
     parameters: {
@@ -202,16 +202,13 @@ export declare function createTools(pipeline: VideoPipeline, store: VideoNotesSt
                 };
             };
         };
-        render(args: any, value: any): {
-            type: "text";
-            text: string;
-        }[];
+        render(args: any, value: any): any[];
     };
     execute(args: {
         entryId: string;
         startTimeSec?: number;
         durationSec?: number;
-    }): Promise<import("./types.js").SliceResult>;
+    }, exec: any): Promise<import("./types.js").SliceResult>;
 } | {
     name: string;
     description: string;

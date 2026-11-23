@@ -12,4 +12,5 @@ export declare function formatSrtTime(seconds: number): string;
 export declare function exportToSrt(segments: TranscriptSegment[]): string;
 export declare function saveTranscripts(segments: unknown, outputJsonPath: string, outputSrtPath: string): Promise<TranscriptSegment[]>;
 export declare function sliceSegments(rawSegments: unknown, startSec: number, endSec: number): TranscriptSegment[];
+export declare function parseSubtitleContent(content: string, source: 'platform-manual' | 'platform-auto'): TranscriptSegment[];
 //# sourceMappingURL=transcript.d.ts.map

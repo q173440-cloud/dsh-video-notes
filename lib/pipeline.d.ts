@@ -7,14 +7,19 @@ export interface PipelineOptions {
     transcribeScript: string;
     store: VideoNotesStore;
     subprocessService?: any;
+    modelDir?: string;
     whisperModel?: string;
     computeType?: string;
+    language?: string;
+    cookies?: string;
     baselineIntervalSec?: number;
     sceneChangeThreshold?: number;
 }
 export interface PrepareOptions {
     signal?: AbortSignal;
     forceRebuild?: boolean;
+    language?: string;
+    cookies?: string;
 }
 export declare class VideoPipeline {
     readonly options: PipelineOptions;

@@ -1,26 +1,61 @@
-import { promises as fs } from 'fs';
+import { promises as fs, statSync } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { runProcess } from './process.js';
+import { resolveCookiesPath } from './cookies.js';
+import { resolveLocalTarget } from './local-media.js';
 import { VideoSourceType, ScopeMode, VideoItemSummary, InspectResult } from './types.js';
 
 export interface ResolveSourceOptions {
   pythonExe: string;
   scope?: ScopeMode;
+  cookies?: string;
+  dataDir?: string;
+  ffprobeExe?: string;
   signal?: AbortSignal;
   subprocessService?: any;
 }
 
+export function extractUrlFromInput(input: string): string | undefined {
+  const m = input.match(/https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/i);
+  if (!m) return undefined;
+  const cleaned = m[0].replace(/[，。！？；：、）】》」』”’.,!?;:)\]]+$/u, '');
+  return /^https?:\/\//i.test(cleaned) ? cleaned : undefined;
+}
+
+export function normalizeInputUrl(input: string): string {
+  const sourceType = detectSourceType(input);
+  if (sourceType === 'local') {
+    return input.trim();
+  }
+  return extractUrlFromInput(input) || input.trim();
+}
+
 export function detectSourceType(input: string): VideoSourceType {
-  const trimmed = input.trim().toLowerCase();
-  if (trimmed.includes('bilibili.com') || trimmed.includes('b23.tv')) {
-    return 'bilibili';
+  const trimmed = input.trim();
+  const url = extractUrlFromInput(trimmed);
+  if (url) {
+    const lower = url.toLowerCase();
+    if (lower.includes('bilibili.com') || lower.includes('b23.tv')) {
+      return 'bilibili';
+    }
+    if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
+      return 'youtube';
+    }
+    return 'other';
   }
-  if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
-    return 'youtube';
+
+  try {
+    const st = statSync(trimmed);
+    if (st.isFile() || st.isDirectory()) {
+      return 'local';
+    }
+  } catch {
+    // ignore non-existent path
   }
-  const ext = path.extname(trimmed);
-  if (['.mp4', '.mkv', '.mov', '.webm', '.flv', '.avi'].includes(ext)) {
+
+  const ext = path.extname(trimmed.toLowerCase());
+  if (['.mp4', '.mkv', '.mov', '.webm', '.flv', '.avi', '.m4v'].includes(ext)) {
     return 'local';
   }
   return 'other';
@@ -34,6 +69,15 @@ export function generateLocalStableId(absPath: string): string {
   return `local-${safeFilename}-${hash.slice(0, 12)}`;
 }
 
+export function getYtDlpExtraArgs(sourceType: VideoSourceType): string[] {
+  if (sourceType !== 'youtube') return [];
+  const args: string[] = ['--remote-components', 'ejs:github'];
+  if (process.execPath) {
+    args.push('--js-runtimes', `node:${process.execPath}`);
+  }
+  return args;
+}
+
 export async function inspectSource(
   input: string,
   options: ResolveSourceOptions
@@ -41,10 +85,41 @@ export async function inspectSource(
   const sourceType = detectSourceType(input);
   const scope: ScopeMode = options.scope || 'single';
 
-  // 1. 本地视频文件直接探测
+  // 1. 本地视频文件或目录探测（支持分离音视频自动配对）
   if (sourceType === 'local') {
     const absPath = path.resolve(input);
     const stat = await fs.stat(absPath);
+    if (stat.isDirectory() && !options.ffprobeExe) {
+      throw new Error(`Directory inspection requires ffprobeExe: ${absPath}`);
+    }
+    if (options.ffprobeExe) {
+      const target = await resolveLocalTarget(absPath, options.ffprobeExe, {
+        signal: options.signal,
+        subprocessService: options.subprocessService
+      });
+      const filename = path.basename(target.videoPath);
+      const stableId = generateLocalStableId(target.videoPath);
+      const pairHint = target.companionAudioPath
+        ? `，已自动配对音频: ${path.basename(target.companionAudioPath)}`
+        : '';
+      return {
+        source: target.videoPath,
+        sourceType: 'local',
+        scope: 'single',
+        isCollection: false,
+        totalItems: 1,
+        items: [{
+          id: '1',
+          stableId,
+          title: filename,
+          url: target.videoPath,
+          duration: target.duration && target.duration > 0 ? target.duration : undefined,
+          status: 'queued'
+        }],
+        summary: `本地视频文件: ${filename} (条目标识: ${stableId}${pairHint})`
+      };
+    }
+
     if (!stat.isFile()) {
       throw new Error(`Target local path is not a file: ${input}`);
     }
@@ -67,21 +142,26 @@ export async function inspectSource(
     };
   }
 
-  // 2. 外部 URL 通过 yt-dlp 查询元数据
+  // 2. 外部 URL 先提取规范化并自动发现 Cookie，再通过 yt-dlp 查询元数据
+  const normalizedUrl = normalizeInputUrl(input);
+  const resolvedCookies = await resolveCookiesPath(sourceType, {
+    explicitCookies: options.cookies,
+    dataDir: options.dataDir
+  });
+
   const args = [
     '-m', 'yt_dlp',
     '--dump-json',
     '--no-warnings',
-    '--skip-download'
+    '--skip-download',
+    scope === 'single' ? '--no-playlist' : '--flat-playlist',
+    ...getYtDlpExtraArgs(sourceType)
   ];
 
-  if (scope === 'single') {
-    args.push('--no-playlist');
-  } else {
-    args.push('--flat-playlist');
+  if (resolvedCookies) {
+    args.push('--cookies', resolvedCookies);
   }
-
-  args.push(input);
+  args.push(normalizedUrl);
 
   const res = await runProcess(options.pythonExe, args, {
     timeoutMs: 60000,
@@ -96,21 +176,22 @@ export async function inspectSource(
   const lines = res.stdout.trim().split('\n').filter(l => l.trim().length > 0);
   const items: VideoItemSummary[] = [];
 
-  // ... 增强探测逻辑 ...
-
-
   // 增强探测：对于 B 站链接，尝试获取 UGC season 完整合集信息
   if (sourceType === 'bilibili' && scope === 'collection') {
-    const bvidMatch = input.match(/(BV[a-zA-Z0-9]+)/);
+    const bvidMatch = normalizedUrl.match(/(BV[a-zA-Z0-9]+)/);
     if (bvidMatch) {
       const bvid = bvidMatch[1];
       try {
         const { stdout: apiOut } = await runProcess(options.pythonExe, [
-          '-c', `import urllib.request, json; 
-req = urllib.request.Request(\"https://api.bilibili.com/x/web-interface/view?bvid=${bvid}\", headers={"User-Agent": "Mozilla/5.0"});
-print(json.dumps(json.loads(urllib.request.urlopen(req).read().decode("utf-8")).get("data", {}).get("ugc_season", {}).get("sections", [])))`
-        ], { timeoutMs: 30000 });
-        
+          '-c',
+          'import sys, urllib.request, json; req = urllib.request.Request(f"https://api.bilibili.com/x/web-interface/view?bvid={sys.argv[1]}", headers={"User-Agent": "Mozilla/5.0"}); print(json.dumps(json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8")).get("data", {}).get("ugc_season", {}).get("sections", [])))',
+          bvid
+        ], {
+          timeoutMs: 30000,
+          signal: options.signal,
+          subprocessService: options.subprocessService
+        });
+
         const sections = JSON.parse(apiOut);
         if (sections && sections.length > 0) {
           let count = 0;
@@ -136,46 +217,46 @@ print(json.dumps(json.loads(urllib.request.urlopen(req).read().decode("utf-8")).
   }
 
   if (items.length === 0) {
-  for (let i = 0; i < lines.length; i++) {
-    try {
-      const parsed = JSON.parse(lines[i]);
-      const title = parsed.title || `Item ${i + 1}`;
-      const duration = parsed.duration || undefined;
-      const uploader = parsed.uploader || parsed.channel || undefined;
-      const itemUrl = parsed.webpage_url || parsed.url || input;
+    for (let i = 0; i < lines.length; i++) {
+      try {
+        const parsed = JSON.parse(lines[i]);
+        const title = parsed.title || `Item ${i + 1}`;
+        const duration = parsed.duration || undefined;
+        const uploader = parsed.uploader || parsed.channel || undefined;
+        const itemUrl = parsed.webpage_url || parsed.url || normalizedUrl;
 
-      let stableId = parsed.id ? String(parsed.id) : `item-${i + 1}`;
-      if (sourceType === 'bilibili') {
-        const bvid = parsed.id || '';
-        const pIndex = parsed.playlist_index ?? (i + 1);
-        stableId = `bili-${bvid}-p${pIndex}`;
-      } else if (sourceType === 'youtube') {
-        stableId = `yt-${parsed.id || i + 1}`;
+        let stableId = parsed.id ? String(parsed.id) : `item-${i + 1}`;
+        if (sourceType === 'bilibili') {
+          const bvid = parsed.id || '';
+          const pIndex = parsed.playlist_index ?? (i + 1);
+          stableId = `bili-${bvid}-p${pIndex}`;
+        } else if (sourceType === 'youtube') {
+          stableId = `yt-${parsed.id || i + 1}`;
+        }
+
+        items.push({
+          id: String(i + 1),
+          stableId,
+          title,
+          url: itemUrl,
+          duration,
+          uploader,
+          pIndex: parsed.playlist_index ?? (i + 1),
+          status: 'queued'
+        });
+      } catch {
+        // ignore
       }
-
-      items.push({
-        id: String(i + 1),
-        stableId,
-        title,
-        url: itemUrl,
-        duration,
-        uploader,
-        pIndex: parsed.playlist_index ?? (i + 1),
-        status: 'queued'
-      });
-    } catch {
-      // ignore
     }
-  }
   }
 
   if (items.length === 0) {
-    throw new Error(`yt-dlp returned no valid items for: ${input}`);
+    throw new Error(`yt-dlp returned no valid items for: ${normalizedUrl}`);
   }
 
   const isCollection = items.length > 1;
   return {
-    source: input,
+    source: normalizedUrl,
     sourceType,
     scope,
     isCollection,

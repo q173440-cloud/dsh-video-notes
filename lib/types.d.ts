@@ -31,11 +31,39 @@ export interface TranscriptSegment {
     correctionNotes?: string;
     source: 'platform-manual' | 'platform-auto' | 'local-asr';
 }
+/** DSH 宿主 LocalAttachmentStore 返回的标准附件引用格式（运行时契约） */
+export interface AttachmentRef {
+    attachmentId: string;
+    mediaType: string;
+    bytes: number;
+    width: number;
+    height: number;
+    name?: string;
+    originalDimensions?: {
+        width: number;
+        height: number;
+    };
+}
+/** DSH 宿主 LocalAttachmentStore 提供的最小图片注册服务接口契约 */
+export interface AttachmentService {
+    saveImage(input: {
+        data: Uint8Array | Buffer;
+        mediaType: string;
+        name?: string;
+    }): Promise<AttachmentRef>;
+    imageLimits?: {
+        maxImageBytes: number;
+        maxImagesPerMessage: number;
+        maxMessageImageBytes: number;
+        mediaTypes: readonly string[];
+    };
+}
 export interface VideoFrameEvidence {
     id: string;
     timestamp: number;
     path: string;
     relativeTime: string;
+    attachment?: AttachmentRef;
 }
 export interface PrepareResult {
     entryId: string;
@@ -88,9 +116,12 @@ export interface SaveNoteResult {
 }
 export interface PluginConfig {
     dataDir?: string;
+    modelDir?: string;
     pythonPath?: string;
     whisperModel?: string;
     computeType?: string;
+    language?: string;
+    cookies?: string;
     baselineIntervalSec?: number;
     sceneChangeThreshold?: number;
 }
