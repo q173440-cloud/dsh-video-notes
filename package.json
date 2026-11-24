@@ -1,7 +1,7 @@
 {
   "name": "dsh-video-notes",
-  "version": "0.1.4",
-  "description": "Windows DSH 视频总结与多模态分析插件，支持 B 站/YouTube/本地视频转写、关键帧抽帧与结构化笔记生成。",
+  "version": "1.0.0",
+  "description": "Cross-platform video analysis CLI and Antigravity progressive-disclosure skill for Bilibili/YouTube/local videos, with auto-cookies, split media remux, faster-whisper ASR, real-PTS keyframes, and low-context slice manifests.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

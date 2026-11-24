@@ -728,6 +728,80 @@ Language: zh-Hans
     console.log(' -> Test 19 PASSED (dir & single-file pairing, work/ remux cleanup, and ambiguity guard verified)');
     passed++;
 
+    // Test 20: plan-slices 落盘清单完整性、stdout <= 30 行、--out-dir 隔离与 completed 自动清理
+    console.log('Test 20: plan-slices manifests, <=30-line stdout cap, --out-dir isolation, and work cleanup');
+    const ep20Id = 'test-plan-slices-t20';
+    const ep20 = store.getEpisodePaths(ep20Id);
+    await fs.mkdir(ep20.framesDir, { recursive: true });
+    await fs.mkdir(ep20.workDir, { recursive: true });
+    await store.saveEpisodeSource(ep20Id, {
+      entryId: ep20Id,
+      title: 'Long Video Slice Plan Test',
+      duration: 280
+    });
+    const t20Segs = [];
+    for (let i = 0; i < 28; i++) {
+      t20Segs.push({
+        id: i + 1,
+        start: i * 10,
+        end: i * 10 + 9,
+        text: `测试字幕句子 ${i + 1}`,
+        source: 'local-asr'
+      });
+    }
+    await fs.writeFile(ep20.transcriptJson, JSON.stringify(t20Segs, null, 2));
+    const t20Frames = [];
+    for (let i = 0; i < 29; i++) {
+      const fname = `frame_pts_${String(i * 300).padStart(8, '0')}.jpg`;
+      const fpath = path.join(ep20.framesDir, fname);
+      if (i === 0) await fs.copyFile(realSampleImgPath, fpath);
+      const ts = i === 28 ? 280 : i * 10;
+      t20Frames.push({
+        id: `frame-${i + 1}`,
+        filename: fname,
+        path: fpath,
+        timestamp: ts,
+        relativeTime: `${String(Math.floor(ts / 60)).padStart(2, '0')}:${String(ts % 60).padStart(2, '0')}`
+      });
+    }
+    await fs.writeFile(path.join(ep20.framesDir, 'metadata.json'), JSON.stringify(t20Frames, null, 2));
+
+    // 20A: 默认写入 work/slices 并测试超长 28 片输出 <= 30 行
+    const planLongRes = await runProcess(process.execPath, [
+      cliPath, 'plan-slices', '--data-dir', dataDir, '--entry-id', ep20Id, '--duration', '10'
+    ]);
+    assert.strictEqual(planLongRes.code, 0, `plan-slices failed: ${planLongRes.stderr}`);
+    const stdoutLines = planLongRes.stdout.trim().split('\n');
+    assert(stdoutLines.length <= 30, `Expected plan-slices stdout <= 30 lines, got ${stdoutLines.length}`);
+    const defaultIndex = JSON.parse(await fs.readFile(path.join(ep20.workDir, 'slices', 'index.json'), 'utf-8'));
+    assert.strictEqual(defaultIndex.sliceCount, 28);
+    const lastSliceText = await fs.readFile(defaultIndex.slices[27].manifestPath, 'utf-8');
+    assert(lastSliceText.includes('frame_pts_00008400.jpg'), 'Last frame at exact totalDuration boundary must be included');
+
+    // 20B: --out-dir 隔离验证
+    const customSlicesDir = path.join(tempRoot, 'custom-slices-t20');
+    const planCustomRes = await runProcess(process.execPath, [
+      cliPath, 'plan-slices', '--data-dir', dataDir, '--entry-id', ep20Id, '--duration', '90', '--out-dir', customSlicesDir, '--json'
+    ]);
+    assert.strictEqual(planCustomRes.code, 0, `plan-slices --out-dir failed: ${planCustomRes.stderr}`);
+    const customPlan = JSON.parse(planCustomRes.stdout);
+    assert.strictEqual(customPlan.sliceCount, 4);
+    assert.strictEqual(customPlan.slicesDir, path.resolve(customSlicesDir));
+    const totalCoveredFrames = customPlan.slices.reduce((sum, s) => sum + s.frameCount, 0);
+    assert.strictEqual(totalCoveredFrames, 29, 'All 29 frames must be covered across slices without loss or duplication');
+
+    // 20C: completed 保存后自动清理 work/slices
+    const saveT20Res = await store.saveNote({
+      entryId: ep20Id,
+      title: 'Long Video Slice Plan Test',
+      status: 'completed',
+      contentMarkdown: validDetailedNote
+    });
+    assert.strictEqual(saveT20Res.cleanedWorkDir, true);
+    assert.strictEqual(await fs.stat(ep20.workDir).then(() => true).catch(() => false), false);
+    console.log(` -> Test 20 PASSED (28-slice stdout=${stdoutLines.length} lines <= 30, 29/29 frames covered, work/slices cleaned)`);
+    passed++;
+
     console.log(`\nALL ${passed} STRICT REGRESSION TESTS PASSED!`);
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });

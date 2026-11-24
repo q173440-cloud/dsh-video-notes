@@ -15,6 +15,7 @@
 | 依赖验证失败后严禁返回残缺 Python 解释器 | `src/index.ts` `hasRequiredDependencies` + `pnpm test` (Test 9) |
 | 已有条目产物完备时严禁重复下载网络媒体，必须就地复用 | `src/pipeline.ts` `hasPreparedArtifacts` + `pnpm test` (Test 10) |
 | completed 完整笔记严禁缺少精确时间戳回查、关键帧定位与主客观来源区分 | `src/store.ts` 事实回查与来源区隔核验 + `pnpm test` (Test 11 负例与正例) |
+| `plan-slices` 切片清单须完整覆盖且超长视频 `stdout <= 30` 行、`completed` 后自动清理 `work/slices/` | `src/slice-plan.ts` + `src/store.ts` + `pnpm test` (Test 20) |
 | 交差前必须跑通测试套件，通过全部正负例回归测试 | `pnpm test` (全部测试通过) |
 
 ## 本项目特有约束
